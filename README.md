@@ -1,4 +1,4 @@
-# 🚀 Enterprise Agentic Support System (LangGraph + RAG + pgvector)
+# Enterprise Agentic Support System (LangGraph + RAG + pgvector)
 
 Production-ready асинхронный мультиагентный сервис для автономии службы поддержки клиентов с гибридным RAG, семантическим кэшированием и непрерывным MLOps-трейсингом.
 
@@ -9,7 +9,7 @@ Production-ready асинхронный мультиагентный серви�
 
 ---
 
-## 📌 Архитектура системы
+## Архитектура системы
 
 ```text
 [Client Request] ──> [FastAPI Server] ──(Semantic Cache Check)──> [Cache Hit: ~12ms]
