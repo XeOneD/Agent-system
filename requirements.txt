@@ -1,0 +1,15 @@
+fastapi==0.110.0
+uvicorn==0.28.0
+psycopg2-binary==2.9.9
+pgvector==0.2.5
+sentence-transformers==2.5.1
+langchain-text-splitters==0.0.1
+python-dotenv==1.0.1
+pydantic-settings==2.2.1
+langgraph==0.0.31
+langchain-core>=0.1.38,<0.2.0
+langchain-community==0.0.28
+openai==1.14.1
+langfuse==2.15.0
+ragas==0.1.5
+datasets==2.18.0
