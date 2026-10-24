@@ -1,2 +1,18 @@
+# secrets
 .env
-.idea
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# IDE
+.idea/
+.vscode/
+
+# local artifacts
+*.log
+results/*.json

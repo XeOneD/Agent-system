@@ -1,60 +1,54 @@
-from typing import Optional
-from src.retriever import bi_encoder
-from src.db import get_connection
+"""Семантический кэш ответов на FAQ-вопросы.
 
-SIMILARITY_THRESHOLD = 0.85
+Что изменилось относительно первой версии:
+- кэшируются только ответы на FAQ, прошедшие проверку (действия и эскалации — никогда);
+- у записей есть TTL: после обновления базы знаний старые ответы не живут вечно;
+- порог близости настраивается и по умолчанию строгий (см. config.py);
+- вместе с ответом хранятся источники.
+"""
 
+import json
+from typing import Any
 
-def init_cache_db():
-    conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS semantic_cache (
-                id SERIAL PRIMARY KEY,
-                query TEXT NOT NULL,
-                response TEXT NOT NULL,
-                embedding vector(384),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        cur.execute("""
-            CREATE INDEX IF NOT EXISTS cache_embedding_idx 
-            ON semantic_cache USING hnsw (embedding vector_cosine_ops);
-        """)
-    conn.commit()
-    conn.close()
+from src.config import get_settings
+from src.db import get_conn
+from src.models import embed_query
 
 
-def get_cached_response(query: str) -> Optional[str]:
-    query_vector = bi_encoder.encode(query).tolist()
-    conn = get_connection()
-    cursor = conn.cursor()
+def lookup(query: str) -> dict[str, Any] | None:
+    s = get_settings()
+    if not s.cache_enabled:
+        return None
+    vector = embed_query(query)
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT response, sources, 1 - (embedding <=> %s::vector) AS similarity
+            FROM semantic_cache
+            WHERE created_at > now() - make_interval(hours => %s)
+            ORDER BY embedding <=> %s::vector
+            LIMIT 1;
+            """,
+            (vector, s.cache_ttl_hours, vector),
+        )
+        row = cur.fetchone()
+    if row is None or float(row[2]) < s.cache_similarity_threshold:
+        return None
+    return {"response": row[0], "sources": row[1], "similarity": float(row[2])}
 
-    cursor.execute("""
-        SELECT response, (1 - (embedding <=> %s::vector)) AS similarity
-        FROM semantic_cache
-        WHERE (1 - (embedding <=> %s::vector)) >= %s
-        ORDER BY similarity DESC
-        LIMIT 1;
-    """, (query_vector, query_vector, SIMILARITY_THRESHOLD))
 
-    row = cursor.fetchone()
-    cursor.close()
-    conn.close()
-
-    if row:
-        return row[0]
-    return None
+def store(query: str, response: str, sources: list[dict[str, Any]]) -> None:
+    if not get_settings().cache_enabled:
+        return
+    vector = embed_query(query)
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO semantic_cache (query, response, sources, embedding) VALUES (%s, %s, %s, %s);",
+            (query, response, json.dumps(sources, ensure_ascii=False), vector),
+        )
 
 
-def set_cached_response(query: str, response: str):
-    query_vector = bi_encoder.encode(query).tolist()
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO semantic_cache (query, response, embedding)
-        VALUES (%s, %s, %s);
-    """, (query, response, query_vector))
-    conn.commit()
-    cursor.close()
-    conn.close()
+def clear() -> int:
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM semantic_cache;")
+        return cur.rowcount
