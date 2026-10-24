@@ -1,47 +1,46 @@
 services:
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: rag_postgres
-    restart: always
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres_password
-      POSTGRES_DB: enterprise_rag
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"   # только с локальной машины
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
-      retries: 5
-    deploy:
-      resources:
-        limits:
-          memory: 2G
+      retries: 10
 
   api:
     build: .
-    container_name: rag_agent_api
-    restart: always
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     ports:
       - "8000:8000"
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres_password@postgres:5432/enterprise_rag
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
-      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
-      - LANGFUSE_HOST=${LANGFUSE_HOST}
     volumes:
-      - D:/Docker/hf_cache:/root/.cache/huggingface
+      - models-cache:/models-cache
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # если Ollama запущена на хосте, а не в compose
     depends_on:
       postgres:
         condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: 4G
+
+  # Локальная LLM. Не нужна, если используете OpenRouter:
+  #   docker compose up -d postgres api
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama:/root/.ollama
 
 volumes:
   pgdata:
+  models-cache:
+  ollama:

@@ -1,150 +1,171 @@
-import os
-from typing import Dict, Any, List, TypedDict, Literal
-import json
+"""Граф обработки обращения на LangGraph.
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
-from langgraph.graph import StateGraph, END
+router ──faq──▶ retriever ──есть контекст──▶ generator ──▶ evaluator
+  │                  └──пусто──▶ escalation        ▲            │
+  ├──action──▶ action (заявка в tickets)           │  score < порога и попытки есть
+  └──escalate──▶ escalation (заявка в tickets)      └────────────┤
+                                                   score ≥ порога ──▶ END
+                                                   попытки кончились ──▶ escalation
+"""
 
-from src.retriever import get_relevant_context
+import logging
+import time
+from functools import lru_cache
+from typing import Any, TypedDict
 
-llm = ChatOpenAI(
-    model="llama3.2:3b",
-    api_key="ollama",
-    base_url="http://host.docker.internal:11434/v1"
-)
+from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.graph import END, START, StateGraph
+
+from src import prompts
+from src.config import get_settings
+from src.llm import get_judge, get_llm
+from src.parsing import parse_intent, parse_score, strip_reasoning
+from src.retriever import retrieve
+from src.routing import route_after_evaluation, route_after_retrieval, route_after_router
+from src.tools import create_ticket
+
+log = logging.getLogger(__name__)
 
 
-class AgentState(TypedDict):
+class AgentState(TypedDict, total=False):
     query: str
-    intent: str  # 'faq', 'action', 'escalate'
-    context: List[Dict[str, Any]]
+    user_id: str
+    intent: str
+    context: list[dict[str, Any]]
     response: str
-    evaluation_score: float
-    retry_count: int
-    is_action_executed: bool
+    evaluation_score: float | None
+    attempts: int
+    ticket_id: int | None
+    timings_ms: dict[str, float]
 
 
-def router_node(state: AgentState) -> Dict[str, Any]:
-    prompt = f"""Классифицируй намерение клиента по запросу: '{state['query']}'.
-Выбери строго одну категорию:
-- faq: вопрос по справке, регламентам, правилам
-- action: просьба выполнить действие (сброс сессии, возврат средств)
-- escalate: жалоба, агрессия или нетипичная ситуация
-
-Ответь ТОЛЬКО названием категории в нижнем регистре."""
-
-    res = llm.invoke([HumanMessage(content=prompt)]).content.strip().lower()
-    intent = res if res in ["faq", "action", "escalate"] else "faq"
-
-    return {"intent": intent}
+def _timed(state: AgentState, name: str, started: float) -> dict[str, float]:
+    timings = dict(state.get("timings_ms") or {})
+    timings[name] = round(timings.get(name, 0.0) + (time.perf_counter() - started) * 1000, 1)
+    return timings
 
 
-def retriever_node(state: AgentState) -> Dict[str, Any]:
-    docs = get_relevant_context(state["query"], top_k=10, top_n=3)
-    return {"context": docs}
+def _format_context(context: list[dict[str, Any]]) -> str:
+    return "\n\n".join(f"[{i}] {doc['title']}\n{doc['content']}" for i, doc in enumerate(context, start=1))
 
 
-def generator_node(state: AgentState) -> Dict[str, Any]:
-    context_str = "\n\n".join(
-        [f"Документ #{i + 1}:\n{doc['content']}" for i, doc in enumerate(state.get("context", []))])
-
-    system_prompt = """Ты — вежливый и точный ассистент технической поддержки.
-Отвечай строго на основе предоставленного контекста. Если в контексте нет ответа, прямо скажи об этом и не придумывай факты."""
-
-    user_prompt = f"Контекст:\n{context_str}\n\nВопрос клиента: {state['query']}"
-
-    res = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]).content
-    return {"response": res}
+def router_node(state: AgentState) -> dict[str, Any]:
+    t0 = time.perf_counter()
+    raw = get_llm().invoke([HumanMessage(content=prompts.ROUTER.format(query=state["query"]))]).content
+    return {"intent": parse_intent(raw), "timings_ms": _timed(state, "router", t0)}
 
 
-def action_node(state: AgentState) -> Dict[str, Any]:
-    print(f"[ACTION] Выполнение автоматической операции для запроса: {state['query']}")
-    response_msg = "Ваша заявка на сброс сессии/проверку платежа принята и успешно отправлена в обработку!"
-    return {"response": response_msg, "is_action_executed": True}
+def retriever_node(state: AgentState) -> dict[str, Any]:
+    t0 = time.perf_counter()
+    return {"context": retrieve(state["query"]), "timings_ms": _timed(state, "retriever", t0)}
 
 
-def evaluator_node(state: AgentState) -> Dict[str, Any]:
-    if not state.get("context"):
-        return {"evaluation_score": 1.0}
-
-    context_str = "\n".join([d["content"] for d in state["context"]])
-
-    eval_prompt = f"""Оцени от 0 до 10, насколько данный ответ подтвержден контекстом и не содержит галлюцинаций:
-Контекст: {context_str}
-Ответ: {state['response']}
-
-Напиши ТОЛЬКО число от 0 до 10."""
-
-    try:
-        score_raw = llm.invoke([HumanMessage(content=eval_prompt)]).content.strip()
-        score = float(score_raw) / 10.0
-    except ValueError:
-        score = 1.0
-
+def generator_node(state: AgentState) -> dict[str, Any]:
+    t0 = time.perf_counter()
+    attempts = state.get("attempts", 0)
+    system = prompts.GENERATOR_SYSTEM
+    if attempts > 0:
+        system += prompts.GENERATOR_STRICT_SUFFIX
+    user = prompts.GENERATOR_USER.format(context=_format_context(state["context"]), query=state["query"])
+    raw = get_llm().invoke([SystemMessage(content=system), HumanMessage(content=user)]).content
     return {
-        "evaluation_score": score,
-        "retry_count": state.get("retry_count", 0) + 1
+        "response": strip_reasoning(raw),
+        "attempts": attempts + 1,
+        "timings_ms": _timed(state, "generator", t0),
     }
 
-def escalation_node(state: AgentState) -> Dict[str, Any]:
-    return {"response": "Ваше обращение передано старшему специалист поддержки. Мы свяжемся с вами в течение 15 минут."}
+
+def evaluator_node(state: AgentState) -> dict[str, Any]:
+    t0 = time.perf_counter()
+    prompt = prompts.JUDGE.format(context=_format_context(state["context"]), answer=state["response"])
+    raw = get_judge().invoke([HumanMessage(content=prompt)]).content
+    score = parse_score(raw)
+    if score is None:
+        # Fail-closed: непонятный ответ судьи — это провал проверки, а не «всё хорошо».
+        log.warning("Судья вернул неразборчивый ответ: %r", raw[:200])
+        score = 0.0
+    return {"evaluation_score": score, "timings_ms": _timed(state, "evaluator", t0)}
 
 
-def build_support_graph():
-    workflow = StateGraph(AgentState)
-
-    workflow.add_node("router", router_node)
-    workflow.add_node("retriever", retriever_node)
-    workflow.add_node("generator", generator_node)
-    workflow.add_node("action", action_node)
-    workflow.add_node("evaluator", evaluator_node)
-    workflow.add_node("escalation", escalation_node)
-
-    workflow.set_entry_point("router")
-
-    def route_decision(state: AgentState) -> Literal["retriever", "action", "escalation"]:
-        if state["intent"] == "action":
-            return "action"
-        elif state["intent"] == "escalate":
-            return "escalation"
-        return "retriever"
-
-    workflow.add_conditional_edges("router", route_decision)
-
-    workflow.add_edge("retriever", "generator")
-
-    workflow.add_edge("generator", "evaluator")
-
-    def evaluation_decision(state: AgentState) -> Literal["__end__", "escalation"]:
-        if state["evaluation_score"] >= 0.7:
-            return END
-        if state["retry_count"] >= 2:
-            return "escalation"
-        return END
-
-    workflow.add_conditional_edges("evaluator", evaluation_decision)
-    workflow.add_edge("action", END)
-    workflow.add_edge("escalation", END)
-
-    return workflow.compile()
+def action_node(state: AgentState) -> dict[str, Any]:
+    t0 = time.perf_counter()
+    ticket_id = create_ticket("action_request", state.get("user_id", "anonymous"), state["query"])
+    return {
+        "ticket_id": ticket_id,
+        "response": (
+            f"Создал заявку №{ticket_id}. Операции с аккаунтом и платежами выполняет специалист, "
+            "статус заявки придёт на почту, привязанную к аккаунту."
+        ),
+        "timings_ms": _timed(state, "action", t0),
+    }
 
 
-app_graph = build_support_graph()
+def escalation_node(state: AgentState) -> dict[str, Any]:
+    t0 = time.perf_counter()
+    ticket_id = create_ticket("escalation", state.get("user_id", "anonymous"), state["query"])
+    return {
+        "ticket_id": ticket_id,
+        "response": (
+            f"Передал обращение специалисту поддержки, номер заявки №{ticket_id}. "
+            "Ответ придёт на почту, привязанную к аккаунту."
+        ),
+        "timings_ms": _timed(state, "escalation", t0),
+    }
+
+
+def _after_evaluation(state: AgentState) -> str:
+    s = get_settings()
+    return route_after_evaluation(state, s.eval_threshold, s.max_generation_attempts)
+
+
+def build_graph():
+    g = StateGraph(AgentState)
+    g.add_node("router", router_node)
+    g.add_node("retriever", retriever_node)
+    g.add_node("generator", generator_node)
+    g.add_node("evaluator", evaluator_node)
+    g.add_node("action", action_node)
+    g.add_node("escalation", escalation_node)
+
+    g.add_edge(START, "router")
+    g.add_conditional_edges(
+        "router",
+        route_after_router,
+        {"retriever": "retriever", "action": "action", "escalation": "escalation"},
+    )
+    g.add_conditional_edges(
+        "retriever",
+        route_after_retrieval,
+        {"generator": "generator", "escalation": "escalation"},
+    )
+    g.add_edge("generator", "evaluator")
+    g.add_conditional_edges(
+        "evaluator",
+        _after_evaluation,
+        {"__end__": END, "generator": "generator", "escalation": "escalation"},
+    )
+    g.add_edge("action", END)
+    g.add_edge("escalation", END)
+    return g.compile()
+
+
+@lru_cache
+def get_graph():
+    return build_graph()
+
+
+def run(query: str, user_id: str = "anonymous") -> AgentState:
+    state: AgentState = {"query": query, "user_id": user_id, "attempts": 0, "timings_ms": {}}
+    return get_graph().invoke(state)
+
 
 if __name__ == "__main__":
-    initial_state: AgentState = {
-        "query": "Как мне вернуть деньги, если подписка оформилась случайно?",
-        "intent": "",
-        "context": [],
-        "response": "",
-        "evaluation_score": 0.0,
-        "retry_count": 0,
-        "is_action_executed": False
-    }
+    import sys
 
-    result = app_graph.invoke(initial_state)
-    print("--- ИТОГОВЫЙ РЕЗУЛЬТАТ ГРАФА ---")
-    print(f"Намерение: {result['intent']}")
-    print(f"Ответ: {result['response']}")
-    print(f"Score оценки: {result.get('evaluation_score', 'N/A')}")
+    logging.basicConfig(level=logging.INFO)
+    result = run(" ".join(sys.argv[1:]) or "Как вернуть деньги за случайное продление подписки?")
+    print(f"Намерение: {result.get('intent')}")
+    print(f"Оценка:    {result.get('evaluation_score')}")
+    print(f"Источники: {[d['doc_id'] for d in result.get('context', [])]}")
+    print(f"Время, мс: {result.get('timings_ms')}")
+    print(f"\n{result.get('response')}")
