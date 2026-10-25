@@ -26,6 +26,7 @@ services:
       - "8000:8000"
     volumes:
       - models-cache:/models-cache
+      - ./results:/app/results
     extra_hosts:
       - "host.docker.internal:host-gateway"   # если Ollama запущена на хосте, а не в compose
     depends_on:

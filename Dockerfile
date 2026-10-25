@@ -16,7 +16,7 @@ COPY src ./src
 COPY scripts ./scripts
 COPY data ./data
 
-RUN useradd --create-home app && mkdir -p /models-cache && chown app /models-cache
+RUN useradd --create-home app && mkdir -p /models-cache /app/results && chown app /models-cache /app/results
 USER app
 
 EXPOSE 8000
