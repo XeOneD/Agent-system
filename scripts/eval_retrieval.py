@@ -2,7 +2,7 @@
 
 Для каждого режима (vector, fts, hybrid, vector_rerank, hybrid_rerank) считает
 Hit@1, Recall@3, Recall@5, MRR@10 на уровне документов и задержку поиска.
-LLM не нужна — только БД и модели поиска, поэтому прогон быстрый и детерминированный.
+LLM не нужна - только БД и модели поиска, поэтому прогон быстрый и детерминированный.
 
 Запуск (после `python -m src.ingest data/kb`):
     python -m scripts.eval_retrieval

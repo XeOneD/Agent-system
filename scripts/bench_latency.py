@@ -50,7 +50,7 @@ def main() -> None:
         if second["cached"]:
             hit.append(second["latency_ms"])
         else:
-            not_cached += 1  # ответ не прошёл проверку или ушёл в эскалацию — в кэш не попал
+            not_cached += 1  # ответ не прошёл проверку или ушёл в эскалацию - в кэш не попал
 
     def fmt(values):
         return f"p50 {percentile(values, 50):.0f} мс, p95 {percentile(values, 95):.0f} мс (n={len(values)})"

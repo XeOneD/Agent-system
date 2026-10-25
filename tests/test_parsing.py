@@ -35,7 +35,7 @@ def test_parse_score(raw, expected):
 
 @pytest.mark.parametrize("raw", ["", "хороший ответ", "15", "100 из 100"])
 def test_parse_score_returns_none_when_unclear(raw):
-    # None означает «проверка не пройдена» — fail-closed.
+    # None означает «проверка не пройдена» - fail-closed.
     assert parse_score(raw) is None
 
 

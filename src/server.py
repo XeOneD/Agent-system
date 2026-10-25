@@ -71,7 +71,7 @@ def chat(request: ChatRequest) -> ChatResponse:
 
     try:
         result = run(query, user_id=request.user_id)
-    except Exception as exc:  # noqa: BLE001 — отдаём клиенту понятную ошибку, детали в лог
+    except Exception as exc:  # noqa: BLE001 - отдаём клиенту понятную ошибку, детали в лог
         log.exception("Ошибка графа")
         raise HTTPException(status_code=502, detail="Сервис ответов временно недоступен.") from exc
 

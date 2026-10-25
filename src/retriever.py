@@ -1,11 +1,11 @@
 """Поиск контекста для ответа.
 
 Режимы (нужны для абляции в scripts/eval_retrieval.py):
-  vector         — только pgvector (косинусная близость e5-эмбеддингов)
-  fts            — только полнотекстовый поиск PostgreSQL (russian, ts_rank_cd)
-  hybrid         — vector + fts, объединение через Reciprocal Rank Fusion
-  vector_rerank  — vector + переранжирование cross-encoder'ом
-  hybrid_rerank  — hybrid + переранжирование cross-encoder'ом (по умолчанию)
+  vector         - только pgvector (косинусная близость e5-эмбеддингов)
+  fts            - только полнотекстовый поиск PostgreSQL (russian, ts_rank_cd)
+  hybrid         - vector + fts, объединение через Reciprocal Rank Fusion
+  vector_rerank  - vector + переранжирование cross-encoder'ом
+  hybrid_rerank  - hybrid + переранжирование cross-encoder'ом (по умолчанию)
 """
 
 from typing import Any
