@@ -22,7 +22,7 @@ def main() -> None:
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM document_chunks;")
         if cur.fetchone()[0]:
-            raise SystemExit("document_chunks не пуста — запускайте проверку только на пустой БД.")
+            raise SystemExit("document_chunks не пуста - запускайте проверку только на пустой БД.")
         zero = [0.0] * get_settings().embedding_dim
         for doc_id, title, body in read_documents(Path("data/kb")):
             cur.execute(

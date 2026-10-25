@@ -22,9 +22,9 @@ def route_after_retrieval(state: Mapping[str, Any]) -> str:
 def route_after_evaluation(state: Mapping[str, Any], threshold: float, max_attempts: int) -> str:
     """Принимаем ответ, перегенерируем или эскалируем.
 
-    attempts — сколько раз уже сгенерирован ответ. Если оценка ниже порога и
+    attempts - сколько раз уже сгенерирован ответ. Если оценка ниже порога и
     попытки остались, возвращаемся в генератор (в строгом режиме). Если попытки
-    кончились — эскалация. Ответ с низкой оценкой пользователю не отдаётся.
+    кончились - эскалация. Ответ с низкой оценкой пользователю не отдаётся.
     """
     score = state.get("evaluation_score")
     if score is not None and score >= threshold:

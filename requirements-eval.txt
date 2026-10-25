@@ -1,5 +1,5 @@
 -r requirements.txt
 # Только для `python -m scripts.eval_agent --ragas`.
-# API RAGAS заметно меняется между версиями; скрипт написан под 0.2–0.3.
+# API RAGAS заметно меняется между версиями; скрипт написан под 0.2-0.3.
 ragas>=0.2,<0.4
 pandas>=2.0

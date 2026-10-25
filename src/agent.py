@@ -81,7 +81,7 @@ def evaluator_node(state: AgentState) -> dict[str, Any]:
     raw = get_judge().invoke([HumanMessage(content=prompt)]).content
     score = parse_score(raw)
     if score is None:
-        # Fail-closed: непонятный ответ судьи — это провал проверки, а не «всё хорошо».
+        # Fail-closed: непонятный ответ судьи - это провал проверки, а не «всё хорошо».
         log.warning("Судья вернул неразборчивый ответ: %r", raw[:200])
         score = 0.0
     return {"evaluation_score": score, "timings_ms": _timed(state, "evaluator", t0)}
