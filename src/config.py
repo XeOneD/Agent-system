@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     device: str = "cpu"
 
     # --- Поиск
-    retrieval_mode: str = "hybrid_rerank"  # vector | fts | hybrid | vector_rerank | hybrid_rerank
+    retrieval_mode: str = "vector"  # vector | fts | hybrid | vector_rerank | hybrid_rerank
     candidates_per_retriever: int = 20
     rerank_candidates: int = 20
     context_top_n: int = 3
