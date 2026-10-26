@@ -25,7 +25,7 @@ def test_bad_answer_is_regenerated_while_attempts_left():
 
 
 def test_bad_answer_is_escalated_when_attempts_exhausted():
-    # Баг первой версии: сюда граф никогда не доходил и отдавал плохой ответ клиенту.
+    # Без этой ветки плохой ответ уходил бы клиенту.
     assert route_after_evaluation({"evaluation_score": 0.3, "attempts": 2}, 0.7, 2) == "escalation"
 
 
